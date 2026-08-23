@@ -1,0 +1,134 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-gold: var(--gold);
+  --color-gold-dim: var(--gold-dim);
+  --color-imperial: var(--imperial);
+  --color-neon: var(--neon);
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+}
+
+:root {
+  --radius: 0.75rem;
+  --background: oklch(0.14 0.015 270);
+  --foreground: oklch(0.96 0.01 90);
+  --card: oklch(0.18 0.02 270);
+  --card-foreground: oklch(0.96 0.01 90);
+  --popover: oklch(0.18 0.02 270);
+  --popover-foreground: oklch(0.96 0.01 90);
+  --primary: oklch(0.78 0.13 85);
+  --primary-foreground: oklch(0.14 0.015 270);
+  --secondary: oklch(0.24 0.03 270);
+  --secondary-foreground: oklch(0.96 0.01 90);
+  --muted: oklch(0.22 0.02 270);
+  --muted-foreground: oklch(0.72 0.02 90);
+  --accent: oklch(0.55 0.22 295);
+  --accent-foreground: oklch(0.98 0.01 90);
+  --destructive: oklch(0.62 0.22 25);
+  --border: oklch(0.3 0.03 270 / 60%);
+  --input: oklch(0.24 0.03 270);
+  --ring: oklch(0.78 0.13 85);
+
+  --gold: oklch(0.82 0.14 88);
+  --gold-dim: oklch(0.62 0.11 85);
+  --imperial: oklch(0.5 0.24 295);
+  --neon: oklch(0.72 0.2 260);
+
+  --font-display: "Cormorant Garamond", "Amiri", serif;
+  --font-body: "Tajawal", "Cairo", system-ui, sans-serif;
+
+  --gradient-royal: linear-gradient(135deg, oklch(0.16 0.02 270) 0%, oklch(0.19 0.05 295) 60%, oklch(0.16 0.02 270) 100%);
+  --gradient-gold: linear-gradient(135deg, var(--gold) 0%, var(--gold-dim) 100%);
+  --gradient-imperial: linear-gradient(135deg, var(--imperial) 0%, var(--neon) 100%);
+  --shadow-luxe: 0 20px 60px -20px oklch(0 0 0 / 60%), 0 0 0 1px oklch(0.82 0.14 88 / 8%);
+  --shadow-glow: 0 0 40px -10px oklch(0.82 0.14 88 / 40%);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html { direction: rtl; }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-body);
+    background-image:
+      radial-gradient(ellipse at top, oklch(0.22 0.06 295 / 30%) 0%, transparent 55%),
+      radial-gradient(ellipse at bottom right, oklch(0.5 0.15 85 / 8%) 0%, transparent 50%);
+    background-attachment: fixed;
+    min-height: 100vh;
+  }
+  h1, h2, h3 { font-family: var(--font-display); letter-spacing: 0.01em; }
+}
+
+@utility glass {
+  background: linear-gradient(135deg, oklch(0.22 0.02 270 / 70%), oklch(0.18 0.02 270 / 50%));
+  backdrop-filter: blur(12px);
+  border: 1px solid oklch(0.82 0.14 88 / 15%);
+  box-shadow: var(--shadow-luxe);
+}
+
+@utility gold-text {
+  background: var(--gradient-gold);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility btn-royal {
+  background: var(--gradient-gold);
+  color: var(--primary-foreground);
+  padding: 0.65rem 1.4rem;
+  border-radius: var(--radius);
+  font-weight: 600;
+  transition: all 0.3s ease;
+  box-shadow: var(--shadow-glow);
+  &:hover { transform: translateY(-2px); box-shadow: 0 0 60px -5px oklch(0.82 0.14 88 / 60%); }
+}
+
+@utility btn-ghost-gold {
+  background: transparent;
+  color: var(--gold);
+  padding: 0.55rem 1.2rem;
+  border-radius: var(--radius);
+  border: 1px solid oklch(0.82 0.14 88 / 40%);
+  transition: all 0.25s ease;
+  &:hover { background: oklch(0.82 0.14 88 / 10%); border-color: var(--gold); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@utility shimmer-line {
+  background: linear-gradient(90deg, transparent, oklch(0.82 0.14 88 / 60%), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 3s linear infinite;
+  height: 1px;
+}
