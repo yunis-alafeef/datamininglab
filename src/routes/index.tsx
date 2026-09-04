@@ -1,737 +1,561 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMemo, useRef, useState } from "react";
-import * as XLSX from "xlsx";
+
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import * as XLSX from 'xlsx';
 import {
-  id3,
-  c45,
-  prism,
-  naiveBayes,
-  confusion,
-  computeSplits,
-  computeC45Splits,
-  predictWithTree,
-  predictWithPrism,
-  kFoldSplit,
-  type Dataset,
-  type Row,
-  type TreeNode,
-} from "@/lib/dm-algorithms";
-import { TreeView } from "@/components/TreeView";
-import { FPGrowthPanel } from "@/components/FPGrowthPanel";
-import { ROCPanel } from "@/components/ROCPanel";
+  ArrowLeft,
+  ArrowUpRight,
+  BarChart3,
+  Check,
+  ChevronDown,
+  CircleHelp,
+  Database,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  FlaskConical,
+  GitBranch,
+  Info,
+  LayoutDashboard,
+  Moon,
+  MoreHorizontal,
+  Play,
+  Plus,
+  RefreshCw,
+  ScanSearch,
+  Settings2,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sun,
+  Table2,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 
-export const Route = createFileRoute("/")({ component: Home });
+type Transaction = { tid: string; items: string[] };
+type Candidate = { items: string[]; count: number; support: number; selected: boolean; reason: string };
 
-type AlgoKey = "id3" | "c45" | "prism" | "bayes" | "fpgrowth" | "roc" | "eval";
-
-const ALGOS: { key: AlgoKey; name: string; latin: string; desc: string }[] = [
-  { key: "id3", name: "خوارزمية ID3", latin: "ID3", desc: "بناء شجرة قرار عبر Entropy و Information Gain" },
-  { key: "c45", name: "خوارزمية C4.5", latin: "C4.5", desc: "تطوير ID3 يدعم القيم العددية المستمرة (Thresholds)" },
-  { key: "prism", name: "خوارزمية Prism", latin: "Prism", desc: "استنباط قواعد التصنيف IF-THEN من قاعدة البيانات" },
-  { key: "bayes", name: "Naïve Bayes", latin: "Bayes", desc: "تصنيف احتمالي يعتمد على نظرية بايز" },
-  { key: "fpgrowth", name: "خوارزمية FP-Growth", latin: "FP-Growth", desc: "اكتشاف الأنماط المتكررة بدون توليد مرشحات" },
-  { key: "roc", name: "منحنى ROC", latin: "ROC Curve", desc: "تقييم أداء المصنفات وحساب TPR/FPR" },
-  { key: "eval", name: "التقييم والمصداقية", latin: "Evaluation", desc: "Confusion Matrix, Precision, Recall, F1, Accuracy" },
+const defaultTransactions: Transaction[] = [
+  { tid: '100', items: ['1', '3', '4'] },
+  { tid: '200', items: ['2', '3', '5'] },
+  { tid: '300', items: ['1', '2', '3', '5'] },
+  { tid: '400', items: ['2', '5'] },
 ];
 
-const SAMPLE_DATA: Dataset = {
-  columns: ["Outlook", "Temperature", "Humidity", "Windy", "Play"],
-  rows: [
-    { Outlook: "sunny", Temperature: "hot", Humidity: "high", Windy: "false", Play: "No" },
-    { Outlook: "sunny", Temperature: "hot", Humidity: "high", Windy: "true", Play: "No" },
-    { Outlook: "overcast", Temperature: "hot", Humidity: "high", Windy: "false", Play: "Yes" },
-    { Outlook: "rain", Temperature: "mild", Humidity: "high", Windy: "false", Play: "Yes" },
-    { Outlook: "rain", Temperature: "cool", Humidity: "normal", Windy: "false", Play: "Yes" },
-    { Outlook: "rain", Temperature: "cool", Humidity: "normal", Windy: "true", Play: "No" },
-    { Outlook: "overcast", Temperature: "cool", Humidity: "normal", Windy: "true", Play: "Yes" },
-    { Outlook: "sunny", Temperature: "mild", Humidity: "high", Windy: "false", Play: "No" },
-    { Outlook: "sunny", Temperature: "cool", Humidity: "normal", Windy: "false", Play: "Yes" },
-    { Outlook: "rain", Temperature: "mild", Humidity: "normal", Windy: "false", Play: "Yes" },
-    { Outlook: "sunny", Temperature: "mild", Humidity: "normal", Windy: "true", Play: "Yes" },
-    { Outlook: "overcast", Temperature: "mild", Humidity: "high", Windy: "true", Play: "Yes" },
-    { Outlook: "overcast", Temperature: "hot", Humidity: "normal", Windy: "false", Play: "Yes" },
-    { Outlook: "rain", Temperature: "mild", Humidity: "high", Windy: "true", Play: "No" },
-  ],
+const scanLabels = [
+  { scan: 1, candidate: 'C₁', frequent: 'L₁', caption: 'العناصر المفردة' },
+  { scan: 2, candidate: 'C₂', frequent: 'L₂', caption: 'الأزواج المحتملة' },
+  { scan: 3, candidate: 'C₃', frequent: 'L₃', caption: 'الثلاثيات النهائية' },
+];
+
+const ruleBlueprint = [
+  { id: 'R1', left: ['2', '3'], right: ['5'] },
+  { id: 'R2', left: ['2', '5'], right: ['3'] },
+  { id: 'R3', left: ['3', '5'], right: ['2'] },
+  { id: 'R4', left: ['2'], right: ['3', '5'] },
+  { id: 'R5', left: ['3'], right: ['2', '5'] },
+  { id: 'R6', left: ['5'], right: ['2', '3'] },
+];
+
+const setLabel = (items: string[]) => `{${items.join(', ')}}`;
+const pairwise = (items: string[]) =>
+  items.flatMap((item, index) => items.slice(index + 1).map((next) => [item, next]));
+const combinations = (items: string[], size: number): string[][] => {
+  if (size === 1) return items.map((item) => [item]);
+  return items.flatMap((item, index) =>
+    combinations(items.slice(index + 1), size - 1).map((rest) => [item, ...rest]),
+  );
 };
+const countSet = (transactions: Transaction[], items: string[]) =>
+  transactions.filter((transaction) => items.every((item) => transaction.items.includes(item))).length;
 
-const FP_SAMPLE_DATA: Dataset = {
-  columns: ["TID", "Items"],
-  rows: [
-    { TID: "T100", Items: "I1, I2, I5" },
-    { TID: "T200", Items: "I2, I4" },
-    { TID: "T300", Items: "I2, I3" },
-    { TID: "T400", Items: "I1, I2, I4" },
-    { TID: "T500", Items: "I1, I3" },
-    { TID: "T600", Items: "I2, I3" },
-    { TID: "T700", Items: "I1, I3" },
-    { TID: "T800", Items: "I1, I2, I3, I5" },
-    { TID: "T900", Items: "I1, I2, I3" },
-  ],
-};
+function Badge({ children, tone = 'teal' }: { children: ReactNode; tone?: 'teal' | 'coral' | 'muted' | 'amber' }) {
+  const tones = {
+    teal: 'border-primary/30 bg-primary/10 text-primary',
+    coral: 'border-accent/30 bg-accent/10 text-accent',
+    muted: 'border-border bg-muted text-muted-foreground',
+    amber: 'border-[#c9943b]/30 bg-[#c9943b]/10 text-[#a87424] dark:text-[#e1ad58]',
+  };
+  return <span className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold ${tones[tone]}`}>{children}</span>;
+}
 
-const ROC_SAMPLE_DATA: Dataset = {
-  columns: ["ID", "Actual", "Score"],
-  rows: [
-    { ID: "1", Actual: "1", Score: 0.95 },
-    { ID: "2", Actual: "0", Score: 0.82 },
-    { ID: "3", Actual: "1", Score: 0.76 },
-    { ID: "4", Actual: "0", Score: 0.60 },
-    { ID: "5", Actual: "1", Score: 0.48 },
-    { ID: "6", Actual: "0", Score: 0.35 },
-    { ID: "7", Actual: "0", Score: 0.20 },
-    { ID: "8", Actual: "1", Score: 0.15 },
-  ],
-};
-
-function Home() {
-  const [dataset, setDataset] = useState<Dataset>(SAMPLE_DATA);
-  const [algo, setAlgo] = useState<AlgoKey>("id3");
-  const [target, setTarget] = useState<string>("Play");
-  const fileRef = useRef<HTMLInputElement>(null);
-  const [fileName, setFileName] = useState<string>("مجموعة بيانات Play Tennis (افتراضية)");
-
-  const attrs = useMemo(() => dataset.columns.filter((c) => c !== target), [dataset, target]);
-
-  function handleFile(f: File) {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const data = new Uint8Array(e.target!.result as ArrayBuffer);
-      const wb = XLSX.read(data, { type: "array" });
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const json: Row[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-      if (json.length === 0) return;
-      const cols = Object.keys(json[0]);
-      setDataset({ columns: cols, rows: json });
-      setTarget(cols[cols.length - 1]);
-      setFileName(f.name);
-    };
-    reader.readAsArrayBuffer(f);
-  }
-
+function SectionHeading({ eyebrow, title, detail, icon }: { eyebrow: string; title: string; detail?: string; icon: ReactNode }) {
   return (
-    <div className="min-h-screen">
-      <header className="relative overflow-hidden border-b border-[color:var(--gold)]/20">
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,oklch(0.55_0.22_295/0.25),transparent_60%)]" />
-        <div className="relative max-w-7xl mx-auto px-6 py-14">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[color:var(--gold)] to-[color:var(--gold-dim)] shadow-[0_0_30px_-5px_var(--gold)] flex items-center justify-center text-[color:var(--background)] font-bold">DM</div>
-            <div className="shimmer-line flex-1" />
-          </div>
-          <h1 className="text-5xl md:text-6xl font-bold tracking-tight">
-            <span className="gold-text">مختبر تنقيب البيانات</span>
-          </h1>
-          <p className="mt-4 text-lg text-muted-foreground max-w-2xl leading-relaxed">
-            منصة تفاعلية فخمة لتطبيق خوارزميات التصنيف والتنبؤ على قواعد بياناتك مباشرة —
-            ارفع ملف Excel واختر الخوارزمية لتشاهد التحليل خطوة بخطوة.
-          </p>
-          <div className="mt-6 flex flex-wrap gap-2 text-xs">
-            {ALGOS.map((a) => (
-              <span key={a.key} className="px-3 py-1 rounded-full border border-[color:var(--gold)]/30 text-[color:var(--gold)]/90 bg-[color:var(--gold)]/5">
-                {a.latin}
-              </span>
-            ))}
-          </div>
+    <div className="mb-5 flex items-start justify-between gap-4">
+      <div className="flex items-start gap-3">
+        <div className="mt-1 flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">{icon}</div>
+        <div>
+          <div className="mono mb-1 text-[10px] font-semibold uppercase tracking-[.16em] text-primary">{eyebrow}</div>
+          <h2 className="display text-xl font-semibold text-foreground">{title}</h2>
+          {detail && <p className="mt-1 text-xs leading-6 text-muted-foreground">{detail}</p>}
         </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-6 py-10 space-y-8">
-        <section className="glass rounded-2xl p-6 md:p-8">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-            <div className="flex-1">
-              <h2 className="text-2xl gold-text font-semibold">١. قاعدة البيانات</h2>
-              <p className="text-sm text-muted-foreground mt-1">
-                {fileName} — <span className="text-[color:var(--gold)]">{dataset.rows.length}</span> سجل ·{" "}
-                <span className="text-[color:var(--gold)]">{dataset.columns.length}</span> صفة
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3 items-center">
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".xlsx,.xls,.csv"
-                className="hidden"
-                onChange={(e) => e.target.files && e.target.files[0] && handleFile(e.target.files[0])}
-              />
-              <button onClick={() => fileRef.current?.click()} className="btn-royal">
-                رفع ملف Excel
-              </button>
-              <button onClick={() => { setDataset(SAMPLE_DATA); setTarget("Play"); setFileName("Play Tennis (افتراضية)"); }} className="btn-ghost-gold text-sm">
-                بيانات افتراضية (ID3/C4.5)
-              </button>
-              <button onClick={() => { setDataset(FP_SAMPLE_DATA); setTarget("Items"); setFileName("FP-Growth Data (افتراضية)"); setAlgo("fpgrowth"); }} className="btn-ghost-gold text-sm border border-[color:var(--gold)]/30">
-                بيانات افتراضية (FP-Growth)
-              </button>
-              <button onClick={() => { setDataset(ROC_SAMPLE_DATA); setFileName("ROC Data (افتراضية)"); setAlgo("roc"); }} className="btn-ghost-gold text-sm border border-[color:var(--neon)]/30 text-[color:var(--neon)]">
-                بيانات افتراضية (ROC)
-              </button>
-              <label className="text-sm flex items-center gap-2">
-                <span className="text-muted-foreground">عمود الفئة (Class):</span>
-                <select
-                  value={target}
-                  onChange={(e) => setTarget(e.target.value)}
-                  className="bg-input border border-border rounded-lg px-3 py-1.5 text-sm text-foreground"
-                >
-                  {dataset.columns.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </label>
-            </div>
-          </div>
-
-          <div className="mt-6 overflow-x-auto rounded-lg border border-border max-h-72">
-            <table className="w-full text-sm">
-              <thead className="bg-[color:var(--secondary)] sticky top-0">
-                <tr>
-                  {dataset.columns.map((c) => (
-                    <th key={c} className={`px-3 py-2 text-right font-medium ${c === target ? "text-[color:var(--gold)]" : ""}`}>
-                      {c}{c === target && " ★"}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {dataset.rows.slice(0, 50).map((r, i) => (
-                  <tr key={i} className="border-t border-border/50 hover:bg-white/[0.02]">
-                    {dataset.columns.map((c) => (
-                      <td key={c} className={`px-3 py-1.5 ${c === target ? "text-[color:var(--gold)] font-medium" : ""}`}>
-                        {String(r[c])}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {dataset.rows.length > 50 && (
-              <div className="text-xs text-center text-muted-foreground py-2">
-                عرض أول 50 من {dataset.rows.length} سجل
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-2xl gold-text font-semibold mb-4">٢. اختر الخوارزمية</h2>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {ALGOS.map((a) => (
-              <button
-                key={a.key}
-                onClick={() => setAlgo(a.key)}
-                className={`p-4 rounded-xl text-right transition-all ${
-                  algo === a.key
-                    ? "bg-gradient-to-br from-[color:var(--gold)]/20 to-[color:var(--imperial)]/20 border-2 border-[color:var(--gold)] shadow-[0_0_30px_-5px_var(--gold)]"
-                    : "glass hover:border-[color:var(--gold)]/50"
-                }`}
-              >
-                <div className="text-xs font-mono text-[color:var(--gold-dim)]">{a.latin}</div>
-                <div className="font-semibold mt-1">{a.name}</div>
-                <div className="text-[11px] text-muted-foreground mt-1 leading-snug">{a.desc}</div>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section className="space-y-6">
-          {algo === "id3" && <ID3Panel dataset={dataset} target={target} attrs={attrs} />}
-          {algo === "c45" && <C45Panel dataset={dataset} target={target} attrs={attrs} />}
-          {algo === "prism" && <PrismPanel dataset={dataset} target={target} attrs={attrs} />}
-          {algo === "bayes" && <BayesPanel dataset={dataset} target={target} attrs={attrs} />}
-          {algo === "fpgrowth" && <FPGrowthPanel dataset={dataset} />}
-          {algo === "roc" && <ROCPanel dataset={dataset} />}
-          {algo === "eval" && <EvalPanel dataset={dataset} target={target} attrs={attrs} />}
-        </section>
-      </main>
-
-      <footer className="mt-16 border-t border-[color:var(--gold)]/20 py-8">
-        <div className="max-w-7xl mx-auto px-6 text-center">
-          <div className="shimmer-line mb-6 mx-auto max-w-xs" />
-          <p className="text-sm text-muted-foreground">
-            هذا الموقع من عمل{" "}
-            <span className="gold-text font-bold text-lg">المهندس يونس العفيف</span>
-          </p>
-          <p className="text-xs text-muted-foreground/70 mt-2">
-            © {new Date().getFullYear()} — مختبر تنقيب البيانات · جميع الحسابات تتم محلياً في متصفحك
-          </p>
-        </div>
-      </footer>
+      </div>
     </div>
   );
 }
 
-function ID3Panel({ dataset, target, attrs }: { dataset: Dataset; target: string; attrs: string[] }) {
-  const { tree, splits, parentEntropy } = useMemo(() => {
-    const s = computeSplits(dataset.rows, attrs, target);
-    return { tree: id3(dataset.rows, attrs, target), splits: s.splits, parentEntropy: s.parentEntropy };
-  }, [dataset, target, attrs]);
-  const rules = useMemo(() => extractRules(tree), [tree]);
-
+function ProgressBar({ value, color = 'teal' }: { value: number; color?: 'teal' | 'coral' }) {
   return (
-    <>
-      <SectionCard title="Entropy الأولي وInformation Gain لكل صفة">
-        <p className="text-sm text-muted-foreground mb-4">
-          Entropy(S) = <span className="text-[color:var(--gold)] font-mono">{parentEntropy.toFixed(4)}</span> bits ·
-          الصفة ذات أعلى Gain تُختار كجذر الشجرة.
-        </p>
-        <SplitsTable splits={splits} />
-      </SectionCard>
-
-      <SectionCard title="شجرة القرار الكاملة (Interactive)">
-        <TreeView root={tree} />
-      </SectionCard>
-
-      <SectionCard title="القواعد المستنبطة من الشجرة">
-        <RulesList rules={rules} target={target} />
-      </SectionCard>
-    </>
-  );
-}
-
-function C45Panel({ dataset, target, attrs }: { dataset: Dataset; target: string; attrs: string[] }) {
-  const { tree, splits, parentEntropy } = useMemo(() => {
-    const s = computeC45Splits(dataset.rows, attrs, target);
-    return { tree: c45(dataset.rows, attrs, target), splits: s.splits, parentEntropy: s.parentEntropy };
-  }, [dataset, target, attrs]);
-  const rules = useMemo(() => extractRules(tree), [tree]);
-
-  return (
-    <>
-      <SectionCard title="C4.5 — يدعم القيم العددية عبر Threshold">
-        <p className="text-sm text-muted-foreground mb-4">
-          Entropy(S) = <span className="text-[color:var(--gold)] font-mono">{parentEntropy.toFixed(4)}</span> ·
-          للصفات الرقمية يتم البحث عن أفضل قيمة عتبة Z تقسم البيانات إلى (Y ≤ Z) و (Y &gt; Z).
-        </p>
-        <SplitsTable splits={splits} showRatio />
-      </SectionCard>
-
-      <SectionCard title="شجرة القرار C4.5"><TreeView root={tree} /></SectionCard>
-
-      <SectionCard title="قواعد التصنيف">
-        <RulesList rules={rules} target={target} />
-      </SectionCard>
-    </>
-  );
-}
-
-function PrismPanel({ dataset, target, attrs }: { dataset: Dataset; target: string; attrs: string[] }) {
-  const { rules, steps } = useMemo(() => prism(dataset.rows, attrs, target), [dataset, target, attrs]);
-
-  return (
-    <>
-      <SectionCard title="القواعد النهائية المستنبطة بواسطة Prism">
-        <div className="space-y-2">
-          {rules.map((r, i) => (
-            <div key={i} className="p-3 rounded-lg border border-[color:var(--gold)]/30 bg-[color:var(--gold)]/5 font-mono text-sm">
-              <span className="text-[color:var(--gold)] font-bold">R{i + 1}:</span> IF{" "}
-              {r.conditions.map((c, j) => (
-                <span key={j}>
-                  <span className="text-[color:var(--neon)]">{c.attribute}</span>={" "}
-                  <span className="text-white">"{c.value}"</span>
-                  {j < r.conditions.length - 1 && <span className="text-[color:var(--gold-dim)]"> AND </span>}
-                </span>
-              ))}{" "}
-              <span className="text-[color:var(--gold-dim)]">THEN</span>{" "}
-              <span className="text-[color:var(--neon)]">{r.conclusion.attribute}</span> ={" "}
-              <span className="text-white font-bold">"{r.conclusion.value}"</span>
-              <span className="ms-3 text-xs text-muted-foreground">
-                (تغطية: {r.coverage} · دقة: {(r.accuracy * 100).toFixed(0)}%)
-              </span>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard title="خطوات البناء (Iterations)">
-        <div className="space-y-4 max-h-[500px] overflow-auto">
-          {steps.map((s, i) => (
-            <div key={i} className="p-4 rounded-lg border border-border">
-              <div className="font-semibold text-[color:var(--gold)] mb-2">
-                القاعدة {i + 1} — الفئة: {s.targetClass}
-              </div>
-              {s.iterations.map((it, j) => (
-                <div key={j} className="mt-3">
-                  <div className="text-xs text-muted-foreground mb-1">التكرار {j + 1} — أفضل الاختيارات:</div>
-                  <table className="w-full text-xs">
-                    <thead className="text-[color:var(--gold-dim)]">
-                      <tr>
-                        <th className="text-right px-2 py-1">الصفة</th>
-                        <th className="text-right px-2 py-1">القيمة</th>
-                        <th className="text-right px-2 py-1">الاحتمالية</th>
-                        <th className="text-right px-2 py-1">التغطية</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {it.map((o, k) => (
-                        <tr key={k} className={k === 0 ? "bg-[color:var(--gold)]/10 text-[color:var(--gold)] font-medium" : ""}>
-                          <td className="px-2 py-1">{o.attribute}</td>
-                          <td className="px-2 py-1">{o.value}</td>
-                          <td className="px-2 py-1 font-mono">{o.probability}</td>
-                          <td className="px-2 py-1">{o.covered}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-    </>
-  );
-}
-
-function BayesPanel({ dataset, target, attrs }: { dataset: Dataset; target: string; attrs: string[] }) {
-  const [query, setQuery] = useState<Record<string, string>>({});
-  const uniqueValues = useMemo(() => {
-    const map: Record<string, string[]> = {};
-    for (const a of attrs) map[a] = Array.from(new Set(dataset.rows.map((r) => String(r[a]))));
-    return map;
-  }, [dataset, attrs]);
-  const result = useMemo(() => naiveBayes(dataset.rows, attrs, target, query), [dataset, target, attrs, query]);
-
-  return (
-    <>
-      <SectionCard title="الاحتمالات القبلية Priors P(C)">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {result.classes.map((c) => (
-            <div key={c} className="glass rounded-lg p-4 text-center">
-              <div className="text-sm text-muted-foreground">P({target}=</div>
-              <div className="font-bold text-[color:var(--gold)]">{c})</div>
-              <div className="text-2xl font-mono mt-1">{result.priors[c].toFixed(3)}</div>
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard title="أدخل حالة جديدة للتنبؤ">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {attrs.map((a) => (
-            <div key={a}>
-              <label className="text-xs text-[color:var(--gold-dim)]">{a}</label>
-              <select
-                value={query[a] || ""}
-                onChange={(e) => setQuery({ ...query, [a]: e.target.value })}
-                className="w-full mt-1 bg-input border border-border rounded-lg px-3 py-2 text-sm"
-              >
-                <option value="">—</option>
-                {uniqueValues[a].map((v) => <option key={v} value={v}>{v}</option>)}
-              </select>
-            </div>
-          ))}
-        </div>
-        {result.prediction && Object.values(query).some((v) => v) && (
-          <div className="mt-6 p-5 rounded-xl bg-gradient-to-br from-[color:var(--imperial)]/20 to-[color:var(--neon)]/10 border border-[color:var(--neon)]/40">
-            <div className="text-xs text-muted-foreground mb-2">الخطوات:</div>
-            {result.prediction.steps.map((s, i) => (
-              <div key={i} className="text-sm font-mono mb-1">
-                P({s.attr}="{s.value}" | C) ={" "}
-                {result.classes.map((c, j) => (
-                  <span key={c}>
-                    <span className="text-[color:var(--gold)]">{c}</span>=
-                    <span className="text-white">{s.probs[c]}</span>
-                    {j < result.classes.length - 1 && "، "}
-                  </span>
-                ))}
-              </div>
-            ))}
-            <div className="mt-3 pt-3 border-t border-white/10">
-              <div className="text-xs text-muted-foreground">P(X|C)·P(C):</div>
-              {result.classes.map((c) => (
-                <div key={c} className="text-sm font-mono">
-                  <span className="text-[color:var(--gold)]">{c}</span> ={" "}
-                  <span className="text-white">{result.prediction!.posterior[c].toExponential(3)}</span>
-                </div>
-              ))}
-              <div className="mt-3 text-lg">
-                التنبؤ:{" "}
-                <span className="gold-text font-bold text-2xl">{result.prediction.predicted}</span>
-              </div>
-            </div>
-          </div>
-        )}
-      </SectionCard>
-
-      <SectionCard title="جدول الاحتمالات الشرطية P(A|C)">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-[color:var(--secondary)]">
-                <th className="text-right px-3 py-2">الصفة</th>
-                <th className="text-right px-3 py-2">القيمة</th>
-                {result.classes.map((c) => (
-                  <th key={c} className="text-right px-3 py-2 text-[color:var(--gold)]">P(·|{c})</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {attrs.flatMap((a) =>
-                Object.keys(result.conditionals[a] || {}).map((v) => (
-                  <tr key={`${a}-${v}`} className="border-t border-border/40">
-                    <td className="px-3 py-1.5 text-[color:var(--gold-dim)]">{a}</td>
-                    <td className="px-3 py-1.5">{v}</td>
-                    {result.classes.map((c) => (
-                      <td key={c} className="px-3 py-1.5 font-mono">
-                        {(result.conditionals[a][v][c] ?? 0).toFixed(3)}
-                      </td>
-                    ))}
-                  </tr>
-                )),
-              )}
-            </tbody>
-          </table>
-        </div>
-      </SectionCard>
-    </>
-  );
-}
-
-function EvalPanel({ dataset, target, attrs }: { dataset: Dataset; target: string; attrs: string[] }) {
-  const [method, setMethod] = useState<"resub" | "split" | "kfold">("split");
-  const [splitPct, setSplitPct] = useState(70);
-  const [k, setK] = useState(4);
-  const [classifier, setClassifier] = useState<"id3" | "c45" | "prism" | "bayes">("id3");
-
-  const result = useMemo(() => {
-    const rows = dataset.rows;
-    if (rows.length === 0) return null;
-    const runPredict = (train: Row[], test: Row[]) => {
-      if (classifier === "id3") {
-        const t = id3(train, attrs, target);
-        return test.map((r) => predictWithTree(t, r));
-      }
-      if (classifier === "c45") {
-        const t = c45(train, attrs, target);
-        return test.map((r) => predictWithTree(t, r));
-      }
-      if (classifier === "prism") {
-        const { rules } = prism(train, attrs, target);
-        const majority = Object.entries(train.reduce<Record<string, number>>((acc, r) => {
-          const key = String(r[target]); acc[key] = (acc[key] || 0) + 1; return acc;
-        }, {})).sort((a, b) => b[1] - a[1])[0]?.[0] || "?";
-        return test.map((r) => predictWithPrism(rules, r, majority));
-      }
-      const nb = (row: Row) => {
-        const q: Record<string, string> = {};
-        for (const a of attrs) q[a] = String(row[a]);
-        const res = naiveBayes(train, attrs, target, q);
-        return res.prediction?.predicted || "?";
-      };
-      return test.map(nb);
-    };
-
-    let actual: string[] = [];
-    let predicted: string[] = [];
-    if (method === "resub") {
-      actual = rows.map((r) => String(r[target]));
-      predicted = runPredict(rows, rows);
-    } else if (method === "split") {
-      const n = Math.floor((rows.length * splitPct) / 100);
-      const train = rows.slice(0, n);
-      const test = rows.slice(n);
-      actual = test.map((r) => String(r[target]));
-      predicted = runPredict(train, test);
-    } else {
-      const folds = kFoldSplit(rows, k);
-      for (const f of folds) {
-        actual = actual.concat(f.test.map((r) => String(r[target])));
-        predicted = predicted.concat(runPredict(f.train, f.test));
-      }
-    }
-    return confusion(actual, predicted);
-  }, [dataset, target, attrs, method, splitPct, k, classifier]);
-
-  return (
-    <>
-      <SectionCard title="إعدادات التقييم">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="text-xs text-[color:var(--gold-dim)] block mb-1">المصنِّف</label>
-            <select value={classifier} onChange={(e) => setClassifier(e.target.value as "id3")} className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm">
-              <option value="id3">ID3</option>
-              <option value="c45">C4.5</option>
-              <option value="prism">Prism</option>
-              <option value="bayes">Naive Bayes</option>
-            </select>
-          </div>
-          <div>
-            <label className="text-xs text-[color:var(--gold-dim)] block mb-1">طريقة التقييم</label>
-            <select value={method} onChange={(e) => setMethod(e.target.value as "split")} className="w-full bg-input border border-border rounded-lg px-3 py-2 text-sm">
-              <option value="resub">Resubstitution (كل البيانات للتدريب والاختبار)</option>
-              <option value="split">Train/Test Split</option>
-              <option value="kfold">K-Fold Cross Validation</option>
-            </select>
-          </div>
-          <div>
-            {method === "split" && (
-              <>
-                <label className="text-xs text-[color:var(--gold-dim)] block mb-1">نسبة التدريب: {splitPct}%</label>
-                <input type="range" min={50} max={90} value={splitPct} onChange={(e) => setSplitPct(Number(e.target.value))} className="w-full accent-[color:var(--gold)]" />
-              </>
-            )}
-            {method === "kfold" && (
-              <>
-                <label className="text-xs text-[color:var(--gold-dim)] block mb-1">K = {k}</label>
-                <input type="range" min={2} max={10} value={k} onChange={(e) => setK(Number(e.target.value))} className="w-full accent-[color:var(--gold)]" />
-              </>
-            )}
-          </div>
-        </div>
-      </SectionCard>
-
-      {result && (
-        <>
-          <SectionCard title="Confusion Matrix">
-            <div className="overflow-x-auto">
-              <table className="mx-auto text-sm">
-                <thead>
-                  <tr>
-                    <th className="p-2"></th>
-                    <th colSpan={result.labels.length} className="p-2 text-[color:var(--gold)]">Predicted →</th>
-                  </tr>
-                  <tr>
-                    <th className="p-2 text-[color:var(--gold)]">Actual ↓</th>
-                    {result.labels.map((l) => <th key={l} className="p-2 px-4 border border-border">{l}</th>)}
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.matrix.map((row, i) => (
-                    <tr key={i}>
-                      <th className="p-2 px-4 border border-border text-[color:var(--gold)]">{result.labels[i]}</th>
-                      {row.map((v, j) => (
-                        <td key={j} className={`p-3 px-6 border border-border text-center font-mono text-lg ${i === j ? "bg-[color:var(--gold)]/20 text-[color:var(--gold)] font-bold" : "text-muted-foreground"}`}>
-                          {v}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </SectionCard>
-
-          <SectionCard title="مقاييس الأداء">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-              <Metric label="Accuracy" value={(result.accuracy * 100).toFixed(2) + "%"} accent />
-              <Metric label="Error Rate" value={(result.errorRate * 100).toFixed(2) + "%"} />
-              <Metric label="Standard Error" value={result.standardError.toFixed(4)} />
-              <Metric label="عدد الفئات" value={String(result.labels.length)} />
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-[color:var(--secondary)]">
-                  <tr>
-                    <th className="text-right px-3 py-2 text-[color:var(--gold)]">الفئة</th>
-                    <th className="text-right px-3 py-2">TP</th>
-                    <th className="text-right px-3 py-2">FP</th>
-                    <th className="text-right px-3 py-2">FN</th>
-                    <th className="text-right px-3 py-2">TN</th>
-                    <th className="text-right px-3 py-2">Precision</th>
-                    <th className="text-right px-3 py-2">Recall</th>
-                    <th className="text-right px-3 py-2">F1</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.perClass.map((p) => (
-                    <tr key={p.label} className="border-t border-border/40">
-                      <td className="px-3 py-1.5 font-medium text-[color:var(--gold)]">{p.label}</td>
-                      <td className="px-3 py-1.5 font-mono">{p.TP}</td>
-                      <td className="px-3 py-1.5 font-mono">{p.FP}</td>
-                      <td className="px-3 py-1.5 font-mono">{p.FN}</td>
-                      <td className="px-3 py-1.5 font-mono">{p.TN}</td>
-                      <td className="px-3 py-1.5 font-mono">{p.precision.toFixed(3)}</td>
-                      <td className="px-3 py-1.5 font-mono">{p.recall.toFixed(3)}</td>
-                      <td className="px-3 py-1.5 font-mono text-[color:var(--neon)]">{p.f1.toFixed(3)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </SectionCard>
-        </>
-      )}
-    </>
-  );
-}
-
-function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="glass rounded-2xl p-6 md:p-8">
-      <h3 className="text-xl gold-text font-semibold mb-4">{title}</h3>
-      {children}
+    <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+      <div className={`h-full rounded-full transition-all duration-500 ${color === 'coral' ? 'bg-accent' : 'bg-primary'}`} style={{ width: `${Math.min(value, 100)}%` }} />
     </div>
   );
 }
 
-function Metric({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
+function Sidebar({ active, onNavigate }: { active: string; onNavigate: (id: string) => void }) {
+  const links = [
+    { id: 'overview', label: 'نظرة عامة', icon: LayoutDashboard },
+    { id: 'dataset', label: 'البيانات', icon: Database },
+    { id: 'scans', label: 'خطوات Apriori', icon: ScanSearch },
+    { id: 'rules', label: 'قواعد الارتباط', icon: GitBranch },
+  ];
   return (
-    <div className={`p-4 rounded-xl border ${accent ? "border-[color:var(--gold)] bg-[color:var(--gold)]/10" : "border-border bg-card/60"}`}>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={`text-2xl font-bold font-mono mt-1 ${accent ? "gold-text" : ""}`}>{value}</div>
+    <aside className="lab-sidebar">
+      <div className="mb-10 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="relative flex size-11 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-[0_0_0_5px_hsl(var(--primary)/.12)]">
+            <FlaskConical size={22} strokeWidth={1.7} />
+            <span className="pulse-dot absolute -right-1 -top-1 size-2 rounded-full bg-accent" />
+          </div>
+          <div>
+            <div className="display text-lg font-bold tracking-tight">مِسبار</div>
+            <div className="mono text-[9px] tracking-[.18em] text-primary/80">DATA MINING LAB</div>
+          </div>
+        </div>
+        <Badge tone="teal">v1.0</Badge>
+      </div>
+
+      <div className="mono mb-3 px-2 text-[10px] uppercase tracking-[.16em] text-slate-400">مساحة العمل</div>
+      <nav className="sidebar-nav space-y-1.5" aria-label="التنقل الرئيسي">
+        {links.map((link) => {
+          const Icon = link.icon;
+          const isActive = active === link.id;
+          return (
+            <button
+              key={link.id}
+              type="button"
+              data-testid={`button-nav-${link.id}`}
+              onClick={() => onNavigate(link.id)}
+              className={`group flex w-full items-center gap-3 rounded-xl px-3 py-3 text-right text-sm transition-all ${isActive ? 'bg-primary font-semibold text-primary-foreground shadow-[0_8px_24px_hsl(var(--primary)/.18)]' : 'text-slate-300 hover:bg-sidebar-accent hover:text-white'}`}
+            >
+              <Icon size={17} strokeWidth={isActive ? 2.2 : 1.7} />
+              <span>{link.label}</span>
+              {isActive && <ArrowLeft className="mr-auto" size={14} />}
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="sidebar-meta mt-12 rounded-2xl border border-slate-700/70 bg-slate-900/35 p-4">
+        <div className="mb-3 flex items-center gap-2 text-primary"><ShieldCheck size={16} /><span className="text-xs font-semibold">وضع المختبر</span></div>
+        <p className="text-[11px] leading-6 text-slate-400">كل نتيجة هنا قابلة للتتبع: من عدّ التكرار إلى سبب بقاء القاعدة أو حذفها.</p>
+        <div className="mt-4 flex items-center gap-2 border-t border-slate-700/60 pt-3 text-[10px] text-slate-500"><span className="pulse-dot size-1.5 rounded-full bg-primary" />تشغيل محلي · بلا خادم</div>
+      </div>
+      <div className="sidebar-meta mt-5 px-2 text-[10px] leading-5 text-slate-500">
+        <div className="mono mb-1 text-slate-400">APR-001 / TDB</div>
+        بيئة تعليمية مفتوحة للطلاب والمدرسين
+      </div>
+    </aside>
+  );
+}
+
+function StatCard({ label, value, note, icon, accent = 'teal' }: { label: string; value: string; note: string; icon: ReactNode; accent?: 'teal' | 'coral' }) {
+  return (
+    <div className="glass-card rounded-2xl p-4 transition-transform hover:-translate-y-0.5">
+      <div className="mb-4 flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <span className={`flex size-8 items-center justify-center rounded-lg ${accent === 'coral' ? 'bg-accent/10 text-accent' : 'bg-primary/10 text-primary'}`}>{icon}</span>
+      </div>
+      <div className="display text-3xl font-semibold tracking-tight">{value}</div>
+      <div className="mt-1 text-[11px] text-muted-foreground">{note}</div>
     </div>
   );
 }
 
-function SplitsTable({ splits, showRatio }: { splits: ReturnType<typeof computeC45Splits>["splits"]; showRatio?: boolean }) {
+function CandidateTable({ rows, columns, minSupport, transactionCount, emptyText }: { rows: Candidate[]; columns: string; minSupport: number; transactionCount: number; emptyText: string }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="bg-[color:var(--secondary)]">
-          <tr>
-            <th className="text-right px-3 py-2">الصفة</th>
-            <th className="text-right px-3 py-2">Entropy الموزون</th>
-            <th className="text-right px-3 py-2 text-[color:var(--gold)]">Information Gain</th>
-            {showRatio && <th className="text-right px-3 py-2">Intrinsic Info</th>}
-            {showRatio && <th className="text-right px-3 py-2 text-[color:var(--neon)]">Gain Ratio</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {splits.map((s, i) => (
-            <tr key={s.attribute} className={`border-t border-border/40 ${i === 0 ? "bg-[color:var(--gold)]/10" : ""}`}>
-              <td className="px-3 py-2 font-medium">
-                {s.attribute}
-                {"threshold" in s && s.threshold !== undefined && (
-                  <span className="ms-2 text-xs text-[color:var(--neon)]">Z = {String(s.threshold)}</span>
-                )}
-                {i === 0 && <span className="ms-2 text-[color:var(--gold)] text-xs">★ الأفضل</span>}
-              </td>
-              <td className="px-3 py-2 font-mono">{s.weightedEntropy.toFixed(4)}</td>
-              <td className="px-3 py-2 font-mono text-[color:var(--gold)]">{s.gain.toFixed(4)}</td>
-              {showRatio && <td className="px-3 py-2 font-mono">{s.intrinsic.toFixed(4)}</td>}
-              {showRatio && <td className="px-3 py-2 font-mono text-[color:var(--neon)]">{s.gainRatio.toFixed(4)}</td>}
+    <div className="table-scroll rounded-xl border border-border">
+      {rows.length === 0 ? (
+        <div className="flex min-h-40 flex-col items-center justify-center gap-2 bg-muted/30 p-6 text-center">
+          <Table2 size={22} className="text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">{emptyText}</p>
+        </div>
+      ) : (
+        <table className="w-full min-w-[620px] border-collapse text-right text-xs">
+          <thead className="bg-muted/50 text-[10px] text-muted-foreground">
+            <tr>
+              <th className="px-4 py-3 font-semibold">المجموعة المرشحة</th>
+              <th className="px-4 py-3 font-semibold">الظهور</th>
+              <th className="px-4 py-3 font-semibold">الدعم النسبي</th>
+              <th className="px-4 py-3 font-semibold">القرار</th>
+              <th className="px-4 py-3 font-semibold">التفسير</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((row, index) => (
+              <tr key={`${columns}-${setLabel(row.items)}`} className={`transition-colors hover:bg-primary/5 ${row.selected ? '' : 'opacity-70'}`} data-testid={`row-candidate-${columns}-${index}`}>
+                <td className="px-4 py-3"><span className="mono rounded-md bg-muted px-2 py-1 text-[11px]">{setLabel(row.items)}</span></td>
+                <td className="mono px-4 py-3 text-muted-foreground">{row.count} / {transactionCount}</td>
+                <td className="px-4 py-3">
+                  <div className="flex min-w-28 items-center gap-2"><span className="mono w-10">{row.support.toFixed(1)}%</span><div className="w-16"><ProgressBar value={row.support} color={row.selected ? 'teal' : 'coral'} /></div></div>
+                </td>
+                <td className="px-4 py-3">{row.selected ? <Badge><Check size={11} />Selected</Badge> : <Badge tone="coral"><X size={11} />Pruned</Badge>}</td>
+                <td className="max-w-[220px] px-4 py-3 text-[11px] leading-5 text-muted-foreground">{row.reason}<span className="mono mr-1 text-[10px]">({minSupport.toFixed(1)}%)</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
 
-function extractRules(node: TreeNode, path: { attr: string; val: string }[] = []): { conditions: { attr: string; val: string }[]; label: string }[] {
-  if (node.isLeaf) return [{ conditions: path, label: node.label || "?" }];
-  const out: { conditions: { attr: string; val: string }[]; label: string }[] = [];
-  for (const c of node.children || []) {
-    out.push(...extractRules(c, [...path, { attr: node.attribute || "?", val: c.value || "?" }]));
-  }
-  return out;
-}
+function App() {
+  const [dark, setDark] = useState(true);
+  const [activeNav, setActiveNav] = useState('overview');
+  const [activeScan, setActiveScan] = useState(1);
+  const [minsup, setMinsup] = useState('50');
+  const [minconf, setMinconf] = useState('70');
+  const [transactions, setTransactions] = useState<Transaction[]>(defaultTransactions);
+  const [newTid, setNewTid] = useState('');
+  const [newItems, setNewItems] = useState('');
+  const [editingTid, setEditingTid] = useState<string | null>(null);
+  const [fileName, setFileName] = useState('');
+  const [uploadHeaders, setUploadHeaders] = useState(['TID', 'Items']);
+  const [tidColumn, setTidColumn] = useState('TID');
+  const [itemsColumn, setItemsColumn] = useState('Items');
+  const [uploadedRows, setUploadedRows] = useState<string[][]>([]);
+  const [status, setStatus] = useState('جاهز للتحليل');
+  const [isRunning, setIsRunning] = useState(false);
+  const [showConfidence, setShowConfidence] = useState(true);
+  const fileRef = useRef<HTMLInputElement>(null);
 
-function RulesList({ rules, target }: { rules: { conditions: { attr: string; val: string }[]; label: string }[]; target: string }) {
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', dark);
+  }, [dark]);
+
+  const minSupportValue = Math.max(0, Math.min(100, Number(minsup) || 0));
+  const minConfidenceValue = Math.max(0, Math.min(100, Number(minconf) || 0));
+  const thresholdCount = (minSupportValue / 100) * transactions.length;
+
+  const itemUniverse = useMemo(
+    () => Array.from(new Set(transactions.flatMap((transaction) => transaction.items))).sort((a, b) => Number(a) - Number(b)),
+    [transactions],
+  );
+  const candidates = useMemo(() => {
+    const makeRows = (sets: string[][], label: string): Candidate[] =>
+      sets.map((items) => {
+        const count = countSet(transactions, items);
+        const support = transactions.length ? (count / transactions.length) * 100 : 0;
+        const selected = support >= minSupportValue;
+        const reason = selected
+          ? label === 'C₁' ? 'يظهر بما يكفي؛ ينتقل إلى المستوى التالي' : 'كل الأجزاء الفرعية المتطلبة اجتازت العتبة'
+          : `يظهر ${count} مرة فقط؛ أقل من الحد الأدنى`;
+        return { items, count, support, selected, reason };
+      });
+    const c1 = makeRows(itemUniverse.map((item) => [item]), 'C₁');
+    const l1 = c1.filter((row) => row.selected).map((row) => row.items[0]);
+    const c2 = makeRows(pairwise(l1), 'C₂');
+    const l2 = c2.filter((row) => row.selected).map((row) => row.items);
+    const c3Sets = combinations(Array.from(new Set(l2.flat())), 3).filter((set) =>
+      pairwise(set).every((pair) => l2.some((frequent) => frequent.join(',') === pair.join(','))),
+    );
+    const c3 = makeRows(c3Sets, 'C₃');
+    return { c1, l1, c2, l2, c3, l3: c3.filter((row) => row.selected).map((row) => row.items) };
+  }, [itemUniverse, minSupportValue, transactions]);
+
+  const rules = useMemo(
+    () =>
+      ruleBlueprint.map((rule) => {
+        const leftCount = countSet(transactions, rule.left);
+        const union = [...rule.left, ...rule.right];
+        const unionCount = countSet(transactions, union);
+        const confidence = leftCount ? (unionCount / leftCount) * 100 : 0;
+        return { ...rule, leftCount, unionCount, confidence, strong: confidence >= minConfidenceValue };
+      }),
+    [minConfidenceValue, transactions],
+  );
+  const strongRules = rules.filter((rule) => rule.strong);
+  const frequentCount = candidates.c1.filter((row) => row.selected).length + candidates.l2.length + candidates.l3.length;
+
+  const navigate = (id: string) => {
+    setActiveNav(id);
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
+
+  const runAnalysis = () => {
+    if (minSupportValue <= 0 || minSupportValue > 100 || minConfidenceValue <= 0 || minConfidenceValue > 100) {
+      setStatus('تحقق من القيم: يجب أن تكون النسبة بين 1 و100');
+      return;
+    }
+    setIsRunning(true);
+    setStatus('يُعاد عدّ المرشحين...');
+    window.setTimeout(() => {
+      setIsRunning(false);
+      setStatus(`اكتمل التحليل · ${frequentCount} مجموعة متكررة`);
+    }, 460);
+  };
+
+  const updateItems = (tid: string, value: string) => {
+    setTransactions((current) => current.map((transaction) => transaction.tid === tid ? { ...transaction, items: value.split(',').map((item) => item.trim()).filter(Boolean) } : transaction));
+  };
+
+  const addTransaction = () => {
+    const tid = newTid.trim();
+    const items = newItems.split(',').map((item) => item.trim()).filter(Boolean);
+    if (!tid || items.length === 0 || transactions.some((transaction) => transaction.tid === tid)) {
+      setStatus('أدخل TID جديداً وعناصر مفصولة بفواصل، وتأكد من عدم تكرار المعرّف');
+      return;
+    }
+    setTransactions((current) => [...current, { tid, items }]);
+    setNewTid('');
+    setNewItems('');
+    setStatus(`أُضيفت المعاملة ${tid} إلى TDB المحلي`);
+  };
+
+  const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    try {
+      const isCsv = file.name.toLowerCase().endsWith('.csv');
+      const workbook = isCsv
+        ? XLSX.read(await file.text(), { type: 'string' })
+        : XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      const matrix = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, {
+        header: 1,
+        raw: false,
+        defval: '',
+      }) as unknown[][];
+      const headers = (matrix[0] ?? []).map((header) => String(header).trim()).filter(Boolean);
+      const rows = matrix.slice(1).map((row) => headers.map((_, index) => String(row[index] ?? '').trim()));
+      if (headers.length < 2 || rows.length === 0) {
+        setUploadedRows([]);
+        setStatus('تعذر قراءة الملف؛ نحتاج صف عناوين وصفاً واحداً على الأقل');
+        return;
+      }
+      setUploadedRows(rows);
+      setUploadHeaders(headers);
+      setTidColumn(headers.find((header) => /tid|id|transaction/i.test(header)) || headers[0]);
+      setItemsColumn(headers.find((header) => /item|product|set/i.test(header)) || headers[1]);
+      setStatus(`تمت قراءة ${rows.length} صفاً من ${file.name}؛ راجع اختيار الأعمدة ثم طبّق الاستيراد`);
+    } catch {
+      setUploadedRows([]);
+      setStatus('حدث خطأ أثناء قراءة الملف؛ تأكد أنه CSV أو Excel صالح');
+    }
+  };
+
+  const importUploadedData = () => {
+    if (!fileName || uploadedRows.length === 0) {
+      setStatus('اختر ملف CSV أو Excel صالحاً أولاً');
+      return;
+    }
+    const tidIndex = uploadHeaders.indexOf(tidColumn);
+    const itemsIndex = uploadHeaders.indexOf(itemsColumn);
+    const parsed = uploadedRows.map((cells) => ({
+      tid: cells[tidIndex]?.trim() || '',
+      items: (cells[itemsIndex] || '')
+        .split(/[,;|]+|\s+/)
+        .map((item) => item.replace(/[{}[\]]/g, '').trim())
+        .filter(Boolean),
+    })).filter((transaction) => transaction.tid && transaction.items.length);
+    if (parsed.length) {
+      setTransactions(parsed);
+      setStatus(`استُوردت ${parsed.length} معاملة من ${fileName}`);
+    } else setStatus('لم نجد صفوفاً صالحة بعد الأعمدة المختارة');
+  };
+
+  const download = (kind: 'csv' | 'xlsx') => {
+    const rows = [
+      ['العنصر', 'الظهور', 'الدعم', 'القرار'],
+      ...candidates.c1.map((row) => [setLabel(row.items), String(row.count), `${row.support.toFixed(1)}%`, row.selected ? 'Selected' : 'Pruned']),
+      ...candidates.c2.map((row) => [setLabel(row.items), String(row.count), `${row.support.toFixed(1)}%`, row.selected ? 'Selected' : 'Pruned']),
+      ...candidates.c3.map((row) => [setLabel(row.items), String(row.count), `${row.support.toFixed(1)}%`, row.selected ? 'Selected' : 'Pruned']),
+    ];
+    if (kind === 'xlsx') {
+      const workbook = XLSX.utils.book_new();
+      const sheet = XLSX.utils.aoa_to_sheet(rows);
+      XLSX.utils.book_append_sheet(workbook, sheet, 'Apriori report');
+      const excel = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([excel], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'misbar-apriori-report.xlsx';
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setStatus('تم تجهيز تقرير Excel بصيغة XLSX');
+      return;
+    }
+    const content = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(',')).join('\n');
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'misbar-apriori-report.csv';
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setStatus(`تم تجهيز تقرير ${kind === 'csv' ? 'CSV' : 'Excel'}`);
+  };
+
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: 'smooth' });
+
   return (
-    <div className="space-y-2">
-      {rules.map((r, i) => (
-        <div key={i} className="p-3 rounded-lg border border-[color:var(--gold)]/30 bg-[color:var(--gold)]/5 font-mono text-sm">
-          <span className="text-[color:var(--gold)] font-bold">R{i + 1}:</span>{" "}
-          <span className="text-[color:var(--gold-dim)]">IF</span>{" "}
-          {r.conditions.length === 0 ? <span className="text-muted-foreground">(دائماً)</span> : r.conditions.map((c, j) => (
-            <span key={j}>
-              <span className="text-[color:var(--neon)]">{c.attr}</span> ={" "}
-              <span className="text-white">"{c.val}"</span>
-              {j < r.conditions.length - 1 && <span className="text-[color:var(--gold-dim)]"> AND </span>}
-            </span>
-          ))}{" "}
-          <span className="text-[color:var(--gold-dim)]">THEN</span>{" "}
-          <span className="text-[color:var(--neon)]">{target}</span> ={" "}
-          <span className="text-white font-bold">"{r.label}"</span>
-        </div>
-      ))}
+    <div dir="rtl" className={dark ? 'dark min-h-screen' : 'min-h-screen'}>
+      <div className="lab-shell">
+        <Sidebar active={activeNav} onNavigate={navigate} />
+        <main className="lab-content">
+          <header className="sticky top-0 z-10 flex min-h-[72px] items-center justify-between gap-4 border-b border-border/70 bg-background/85 px-5 py-4 backdrop-blur-xl lg:px-10">
+            <div className="flex items-center gap-3">
+              <div className="hidden size-2 rounded-full bg-primary md:block" />
+              <div>
+                <div className="mono text-[10px] uppercase tracking-[.15em] text-muted-foreground">APR / WORKBENCH</div>
+                <div className="mt-1 text-xs font-medium text-foreground">{activeNav === 'overview' ? 'مختبر التنقيب عن المعرفة' : activeNav === 'scans' ? 'تتبّع المسح التكراري' : activeNav === 'rules' ? 'تحليل قواعد الارتباط' : 'محرر مجموعة البيانات'}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="hidden items-center gap-2 text-[10px] text-muted-foreground sm:flex"><span className="size-1.5 rounded-full bg-primary" />محلي وآمن</span>
+              <button type="button" data-testid="button-toggle-theme" onClick={() => setDark((value) => !value)} className="flex size-9 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground transition-colors hover:border-primary hover:text-primary" aria-label="تبديل المظهر">
+                {dark ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              <button type="button" data-testid="button-top-export" onClick={() => download('csv')} className="hidden items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-foreground transition-colors hover:border-primary hover:text-primary sm:flex">
+                <Download size={14} />تصدير سريع
+              </button>
+            </div>
+          </header>
+
+          <div className="mx-auto max-w-[1440px] px-5 pb-14 pt-8 lg:px-10">
+            <section id="overview" className="rise-in scroll-mt-24">
+              <div className="relative overflow-hidden rounded-[24px] border border-primary/25 bg-[#142d35] p-6 text-[#e9f5f2] shadow-[0_24px_70px_hsl(184_45%_10%/.25)] md:p-9">
+                <div className="data-grid absolute inset-0 opacity-[.13]" />
+                <div className="absolute -left-20 -top-28 size-72 rounded-full bg-primary/20 blur-3xl" />
+                <div className="relative grid gap-9 lg:grid-cols-[1fr_auto] lg:items-end">
+                  <div className="max-w-2xl">
+                    <div className="mb-5 flex flex-wrap items-center gap-2">
+                      <Badge>LAB NOTE · 01</Badge>
+                      <span className="mono text-[10px] text-slate-400">TDB / APRIORI / TRACEABLE</span>
+                    </div>
+                    <h1 className="display max-w-xl text-4xl font-semibold leading-[1.12] tracking-tight md:text-6xl">اكتشف النمط،<br /><span className="text-primary">وتتبّع السبب.</span></h1>
+                    <p className="mt-5 max-w-lg text-sm leading-7 text-slate-300">مختبر تفاعلي يشرح خوارزمية Apriori كما تعمل فعلاً — من المعاملة الخام إلى القاعدة القوية، خطوة بعد خطوة.</p>
+                    <div className="mt-7 flex flex-wrap gap-3">
+                      <button type="button" data-testid="button-run-hero" onClick={runAnalysis} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-xs font-bold text-primary-foreground transition-transform hover:-translate-y-0.5">
+                        {isRunning ? <RefreshCw className="animate-spin" size={15} /> : <Play size={15} fill="currentColor" />}شغّل التجربة
+                      </button>
+                      <button type="button" data-testid="button-scroll-scans" onClick={() => navigate('scans')} className="flex items-center gap-2 rounded-xl border border-slate-500/60 px-4 py-2.5 text-xs font-semibold text-slate-200 transition-colors hover:border-primary hover:text-primary">
+                        ابدأ من Scan 1 <ArrowLeft size={14} />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 lg:w-64">
+                    <div className="rounded-2xl border border-slate-500/40 bg-slate-950/20 p-4"><div className="mono text-[10px] text-slate-400">SUPPORT</div><div className="display mt-2 text-3xl text-primary">{minSupportValue}%</div><div className="mt-1 text-[10px] text-slate-400">الحد الأدنى</div></div>
+                    <div className="rounded-2xl border border-slate-500/40 bg-slate-950/20 p-4"><div className="mono text-[10px] text-slate-400">CONFIDENCE</div><div className="display mt-2 text-3xl text-accent">{minConfidenceValue}%</div><div className="mt-1 text-[10px] text-slate-400">الحد الأدنى</div></div>
+                    <div className="col-span-2 flex items-center justify-between rounded-2xl border border-slate-500/40 bg-slate-950/20 p-3 text-[10px] text-slate-300"><span className="flex items-center gap-2"><span className="pulse-dot size-1.5 rounded-full bg-primary" />{status}</span><span className="mono text-slate-500">{transactions.length} TID</span></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="المعاملات" value={String(transactions.length).padStart(2, '0')} note="صفوف قابلة للتحرير في TDB" icon={<Database size={16} />} />
+              <StatCard label="العناصر الفريدة" value={String(itemUniverse.length).padStart(2, '0')} note="بعد تنظيف مجموعة البيانات" icon={<BarChart3 size={16} />} accent="coral" />
+              <StatCard label="المجموعات المتكررة" value={isRunning ? '—' : String(frequentCount).padStart(2, '0')} note="عبر مستويات L₁ → L₃" icon={<Check size={16} />} />
+              <StatCard label="قواعد قوية" value={String(strongRules.length).padStart(2, '0')} note={`من أصل ${rules.length} قاعدة لـ I={2,3,5}`} icon={<GitBranch size={16} />} accent="coral" />
+            </section>
+
+            <section className="glass-card mt-8 rounded-2xl p-5 md:p-6">
+              <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+                <div><div className="mono text-[10px] uppercase tracking-[.16em] text-primary">EXPERIMENT CONTROLS</div><h2 className="mt-1 text-base font-bold">إعدادات التجربة</h2></div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={isRunning ? 'amber' : 'teal'}><span className={`size-1.5 rounded-full ${isRunning ? 'bg-[#c9943b]' : 'bg-primary'}`} />{isRunning ? 'جارٍ الحساب' : status}</Badge>
+                  <button type="button" data-testid="button-run-analysis" onClick={runAnalysis} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-xs font-bold text-primary-foreground hover:brightness-105">{isRunning ? <RefreshCw className="animate-spin" size={14} /> : <Play size={14} fill="currentColor" />}إعادة الحساب</button>
+                </div>
+              </div>
+              <div className="mt-5 grid gap-4 md:grid-cols-[1fr_1fr_1.4fr]">
+                <label className="block"><span className="mb-2 block text-[11px] font-semibold text-muted-foreground">Minimum support <span className="mono mr-1 text-primary">minsup</span></span><div className="relative"><input data-testid="input-minsup" type="number" min="1" max="100" value={minsup} onChange={(event) => setMinsup(event.target.value)} className="mono w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/15" /><span className="absolute left-3 top-3 text-xs text-muted-foreground">%</span></div><input data-testid="slider-minsup" aria-label="Minimum support slider" type="range" min="1" max="100" value={minSupportValue} onChange={(event) => setMinsup(event.target.value)} className="mt-3 w-full accent-primary" /><ProgressBar value={minSupportValue} /></label>
+                <label className="block"><span className="mb-2 block text-[11px] font-semibold text-muted-foreground">Minimum confidence <span className="mono mr-1 text-accent">minconf</span></span><div className="relative"><input data-testid="input-minconf" type="number" min="1" max="100" value={minconf} onChange={(event) => setMinconf(event.target.value)} className="mono w-full rounded-xl border border-input bg-background px-3 py-3 text-sm outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15" /><span className="absolute left-3 top-3 text-xs text-muted-foreground">%</span></div><input data-testid="slider-minconf" aria-label="Minimum confidence slider" type="range" min="1" max="100" value={minConfidenceValue} onChange={(event) => setMinconf(event.target.value)} className="mt-3 w-full accent-accent" /><ProgressBar value={minConfidenceValue} color="coral" /></label>
+                <div className="rounded-xl border border-dashed border-border bg-muted/30 p-3 text-xs leading-6 text-muted-foreground"><div className="mb-1 flex items-center gap-2 font-semibold text-foreground"><Settings2 size={14} className="text-primary" />لماذا هذه القيم؟</div>مع 4 معاملات، تعني <span className="mono text-primary">{thresholdCount.toFixed(1)}</span> مرات ظهور على الأقل للمرور من مستوى إلى آخر. عدّل العتبة وشاهد القرار يتغير.</div>
+              </div>
+            </section>
+
+            <section id="dataset" className="mt-12 scroll-mt-24">
+              <SectionHeading eyebrow="01 / DATASET" title="مجموعة TDB" detail="نقطة البداية في المثال المشروح. حرّر أي صف واختبر أثره على المسح فوراً." icon={<Database size={17} />} />
+              <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
+                <div className="glass-card overflow-hidden rounded-2xl">
+                  <div className="flex items-center justify-between border-b border-border p-4"><div className="flex items-center gap-2 text-sm font-bold"><Table2 size={16} className="text-primary" />جدول المعاملات</div><Badge tone="muted">TDB · {transactions.length} rows</Badge></div>
+                  <div className="table-scroll">
+                    {transactions.length === 0 ? <div className="flex min-h-44 flex-col items-center justify-center gap-2 p-6 text-center"><Database size={24} className="text-muted-foreground" /><p className="text-sm text-muted-foreground">لا توجد معاملات. أضف صفاً جديداً للبدء.</p></div> : <table className="w-full min-w-[510px] text-right text-xs">
+                      <thead className="bg-muted/40 text-[10px] text-muted-foreground"><tr><th className="px-4 py-3 font-semibold">TID</th><th className="px-4 py-3 font-semibold">Items</th><th className="px-4 py-3 font-semibold">الحالة</th><th className="px-4 py-3 text-left font-semibold">إجراء</th></tr></thead>
+                      <tbody className="divide-y divide-border">{transactions.map((transaction) => <tr key={transaction.tid} className="group hover:bg-primary/5" data-testid={`row-transaction-${transaction.tid}`}><td className="mono px-4 py-3 text-primary">{transaction.tid}</td><td className="px-4 py-3">{editingTid === transaction.tid ? <input autoFocus data-testid={`input-edit-items-${transaction.tid}`} defaultValue={transaction.items.join(', ')} onBlur={(event) => { updateItems(transaction.tid, event.target.value); setEditingTid(null); }} onKeyDown={(event) => { if (event.key === 'Enter') { updateItems(transaction.tid, event.currentTarget.value); setEditingTid(null); } }} className="mono w-full rounded-lg border border-primary bg-background px-2 py-1.5 text-xs outline-none" /> : <div className="flex flex-wrap gap-1.5">{transaction.items.map((item) => <span key={item} className="mono rounded-md bg-muted px-2 py-1 text-[11px]">{item}</span>)}</div>}</td><td className="px-4 py-3"><span className="flex items-center gap-1.5 text-[10px] text-primary"><span className="size-1.5 rounded-full bg-primary" />صالح</span></td><td className="px-4 py-3 text-left"><div className="flex justify-end gap-1 opacity-60 transition-opacity group-hover:opacity-100"><button type="button" data-testid={`button-edit-transaction-${transaction.tid}`} onClick={() => setEditingTid(transaction.tid)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-primary" aria-label={`تعديل ${transaction.tid}`}><MoreHorizontal size={15} /></button><button type="button" data-testid={`button-delete-transaction-${transaction.tid}`} onClick={() => { setTransactions((current) => current.filter((item) => item.tid !== transaction.tid)); setStatus(`حُذفت المعاملة ${transaction.tid}`); }} className="rounded-lg p-2 text-muted-foreground hover:bg-accent/10 hover:text-accent" aria-label={`حذف ${transaction.tid}`}><Trash2 size={14} /></button></div></td></tr>)}</tbody>
+                    </table>}
+                  </div>
+                  <div className="grid gap-2 border-t border-border bg-muted/20 p-3 md:grid-cols-[110px_1fr_auto]"><input data-testid="input-new-tid" value={newTid} onChange={(event) => setNewTid(event.target.value)} placeholder="TID جديد" className="mono rounded-lg border border-input bg-background px-3 py-2 text-xs outline-none focus:border-primary" /><input data-testid="input-new-items" value={newItems} onChange={(event) => setNewItems(event.target.value)} placeholder="العناصر: 1, 3, 4" className="mono rounded-lg border border-input bg-background px-3 py-2 text-xs outline-none focus:border-primary" /><button type="button" data-testid="button-add-transaction" onClick={addTransaction} className="flex items-center justify-center gap-1 rounded-lg border border-primary/40 px-3 py-2 text-xs font-semibold text-primary hover:bg-primary/10"><Plus size={14} />إضافة</button></div>
+                </div>
+
+                <div className="glass-card rounded-2xl p-5">
+                  <div className="mb-4 flex items-start justify-between gap-3"><div><div className="mono text-[10px] tracking-[.14em] text-primary">IMPORT / MAP</div><h3 className="mt-1 text-sm font-bold">استيراد بيانات جديدة</h3></div><Upload size={18} className="text-muted-foreground" /></div>
+                  <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" onChange={handleFileChange} className="hidden" />
+                  <button type="button" data-testid="button-upload-file" onClick={() => fileRef.current?.click()} className="group flex w-full flex-col items-center justify-center rounded-xl border border-dashed border-primary/35 bg-primary/5 px-4 py-7 text-center transition-colors hover:border-primary hover:bg-primary/10"><div className="mb-3 flex size-10 items-center justify-center rounded-xl bg-card text-primary shadow-sm"><Upload size={18} /></div><span className="text-xs font-semibold">{fileName || 'اسحب ملفاً أو اختر من جهازك'}</span><span className="mt-1 text-[10px] text-muted-foreground">CSV · XLSX · XLS</span></button>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2"><label className="text-[10px] font-semibold text-muted-foreground">عمود TID<select data-testid="select-tid-column" value={tidColumn} onChange={(event) => setTidColumn(event.target.value)} className="mt-1.5 w-full rounded-lg border border-input bg-background px-2 py-2 text-xs outline-none focus:border-primary">{uploadHeaders.map((header) => <option key={header} value={header}>{header}</option>)}</select></label><label className="text-[10px] font-semibold text-muted-foreground">عمود Items<select data-testid="select-items-column" value={itemsColumn} onChange={(event) => setItemsColumn(event.target.value)} className="mt-1.5 w-full rounded-lg border border-input bg-background px-2 py-2 text-xs outline-none focus:border-primary">{uploadHeaders.map((header) => <option key={header} value={header}>{header}</option>)}</select></label></div>
+                  <button type="button" data-testid="button-import-file" onClick={importUploadedData} disabled={!fileName || uploadedRows.length === 0} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl border border-border bg-muted/40 px-3 py-2.5 text-xs font-semibold text-foreground transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"><FileSpreadsheet size={15} />تطبيق الاستيراد</button>
+                  <p className="mt-3 flex items-start gap-2 text-[10px] leading-5 text-muted-foreground"><Info size={13} className="mt-0.5 shrink-0 text-primary" />يفصل CSV العناصر بفاصلة أو مسافة منقوطة. لا تُرفع البيانات إلى أي خادم.</p>
+                </div>
+              </div>
+            </section>
+
+            <section id="scans" className="mt-14 scroll-mt-24">
+              <SectionHeading eyebrow="02 / APRIORI TRACE" title="رحلة المرشح" detail="تابع كيف يُولد المرشح، كيف يُحسب دعمه، ولماذا يبقى Selected أو يُحذف Pruned." icon={<ScanSearch size={17} />} />
+              <div className="mb-5 flex flex-wrap items-center gap-2 rounded-2xl border border-border bg-card/60 p-2">
+                {scanLabels.map((label) => <button key={label.scan} type="button" data-testid={`button-scan-${label.scan}`} onClick={() => setActiveScan(label.scan)} className={`flex min-w-[150px] flex-1 items-center gap-3 rounded-xl px-3 py-3 text-right transition-all ${activeScan === label.scan ? 'bg-primary text-primary-foreground shadow-md' : 'text-muted-foreground hover:bg-muted'}`}><span className={`mono flex size-8 items-center justify-center rounded-lg text-xs ${activeScan === label.scan ? 'bg-primary-foreground/15' : 'bg-muted text-primary'}`}>0{label.scan}</span><span><span className="block text-xs font-bold">Scan {label.scan}</span><span className={`mono text-[10px] ${activeScan === label.scan ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>{label.candidate} → {label.frequent} · {label.caption}</span></span>{activeScan === label.scan && <ChevronDown className="mr-auto" size={15} />}</button>)}
+              </div>
+              <div className="glass-card rounded-2xl p-5 md:p-6">
+                {isRunning ? <div className="space-y-4"><div className="h-5 w-44 animate-pulse rounded bg-muted" /><div className="h-32 animate-pulse rounded-xl bg-muted" /><div className="h-10 animate-pulse rounded-xl bg-muted" /></div> : activeScan === 1 ? <><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center"><div><div className="mono text-xs text-primary">C₁ / L₁</div><h3 className="mt-1 text-base font-bold">المسح الأول: العناصر المفردة</h3></div><div className="flex items-center gap-2"><Badge tone="muted">{candidates.c1.length} مرشحين</Badge><Badge>{candidates.l1.length} ناجح</Badge></div></div><CandidateTable rows={candidates.c1} columns="C1" minSupport={minSupportValue} transactionCount={transactions.length} emptyText="أضف معاملات تحتوي على عناصر للبدء." /><div className="mt-5 grid gap-3 md:grid-cols-2"><div className="rounded-xl border border-primary/20 bg-primary/5 p-4"><div className="mb-2 flex items-center gap-2 text-xs font-bold text-primary"><Check size={14} />L₁ · الناجون</div><div className="flex flex-wrap gap-2">{candidates.l1.map((item) => <span key={item} className="mono rounded-lg border border-primary/20 bg-card px-2.5 py-1.5 text-xs">{setLabel([item])}</span>)}</div></div><div className="rounded-xl border border-accent/20 bg-accent/5 p-4 text-xs leading-6"><div className="mb-1 flex items-center gap-2 font-bold text-accent"><CircleHelp size={14} />قاعدة Apriori</div>العنصر 4 لا يظهر مرتين، لذلك لا يمكن لأي مجموعة أكبر تحتويه أن تصبح متكررة.</div></div></> : activeScan === 2 ? <><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center"><div><div className="mono text-xs text-primary">C₂ / L₂</div><h3 className="mt-1 text-base font-bold">المسح الثاني: الأزواج</h3></div><div className="flex items-center gap-2"><Badge tone="muted">{candidates.c2.length} مرشحين</Badge><Badge>{candidates.l2.length} ناجح</Badge></div></div><CandidateTable rows={candidates.c2} columns="C2" minSupport={minSupportValue} transactionCount={transactions.length} emptyText="نحتاج عنصرين متكررين على الأقل من L₁." /><div className="mt-5 rounded-xl border border-border bg-muted/30 p-4 text-xs leading-6 text-muted-foreground"><span className="font-bold text-foreground">التوليد:</span> نصل كل عناصر L₁ معاً، ثم نتحقق من ظهور الزوج في المعاملات. الزوج <span className="mono text-accent">{setLabel(['1', '2'])}</span> يُحذف لأنه ظهر مرة واحدة فقط.</div></> : <><div className="mb-5 flex flex-col justify-between gap-3 md:flex-row md:items-center"><div><div className="mono text-xs text-primary">C₃ / L₃</div><h3 className="mt-1 text-base font-bold">المسح الثالث: الثلاثيات</h3></div><div className="flex items-center gap-2"><Badge tone="muted">{candidates.c3.length} مرشحين</Badge><Badge>{candidates.l3.length} ناجح</Badge></div></div><CandidateTable rows={candidates.c3} columns="C3" minSupport={minSupportValue} transactionCount={transactions.length} emptyText="يحتاج هذا المستوى إلى أزواج ناجحة في L₂." /><div className="mt-5 flex flex-col gap-2 rounded-xl border border-primary/25 bg-primary/5 p-4 text-xs leading-6"><div className="flex items-center gap-2 font-bold text-primary"><ArrowUpRight size={15} />النتيجة التي سنبني عليها القواعد</div><p className="text-muted-foreground">المجموعة <span className="mono font-semibold text-foreground">{setLabel(candidates.l3[0] || ['2', '3', '5'])}</span> هي الوحيدة التي اجتازت الدعم في هذا المستوى.</p></div></>}
+              </div>
+            </section>
+
+            <section id="rules" className="mt-14 scroll-mt-24">
+              <SectionHeading eyebrow="03 / RULES" title="من المجموعة إلى القاعدة" detail="I={2,3,5} تولّد ستة اتجاهات. الثقة ليست تخميناً — إنها كسر واضح يمكنك قراءته." icon={<GitBranch size={17} />} />
+              <div className="grid gap-5 xl:grid-cols-[1.25fr_.75fr]">
+                <div className="glass-card overflow-hidden rounded-2xl">
+                  <div className="flex flex-col justify-between gap-3 border-b border-border p-5 sm:flex-row sm:items-center"><div><div className="mono text-[10px] tracking-[.16em] text-primary">RULE MATRIX / I={'{2,3,5}'}</div><h3 className="mt-1 text-sm font-bold">جميع القواعد المحتملة</h3></div><div className="flex items-center gap-2"><Badge tone="coral">{strongRules.length} قوية</Badge><button type="button" data-testid="button-toggle-confidence" onClick={() => setShowConfidence((value) => !value)} className={`rounded-lg border px-2.5 py-1.5 text-[10px] font-semibold transition-colors ${showConfidence ? 'border-primary/30 bg-primary/10 text-primary' : 'border-border text-muted-foreground'}`}>{showConfidence ? 'إظهار الثقة' : 'إخفاء الثقة'}</button></div></div>
+                  <div className="table-scroll"><table className="w-full min-w-[640px] text-right text-xs"><thead className="bg-muted/40 text-[10px] text-muted-foreground"><tr><th className="px-5 py-3">القاعدة</th><th className="px-3 py-3">الحساب الدقيق</th><th className="px-3 py-3">الثقة</th><th className="px-5 py-3">القرار</th></tr></thead><tbody className="divide-y divide-border">{rules.map((rule) => <tr key={rule.id} className={rule.strong ? 'bg-primary/5' : 'hover:bg-muted/30'} data-testid={`row-rule-${rule.id}`}><td className="px-5 py-4"><span className="mono mr-2 text-[10px] text-muted-foreground">{rule.id}</span><span className="mono">{setLabel(rule.left)} → {setLabel(rule.right)}</span></td><td className="mono px-3 py-4 text-[10px] text-muted-foreground">{rule.unionCount} / {rule.leftCount} {showConfidence && <span className="mr-1">= {rule.confidence.toFixed(1)}%</span>}</td><td className="px-3 py-4"><div className="flex items-center gap-2">{showConfidence && <><span className={`mono font-semibold ${rule.strong ? 'text-primary' : 'text-muted-foreground'}`}>{rule.confidence.toFixed(1)}%</span><div className="w-16"><ProgressBar value={rule.confidence} color={rule.strong ? 'teal' : 'coral'} /></div></>}</div></td><td className="px-5 py-4">{rule.strong ? <Badge><Check size={11} />Strong</Badge> : <Badge tone="muted">أقل من {minConfidenceValue}%</Badge>}</td></tr>)}</tbody></table></div>
+                </div>
+
+                <div className="glass-card rounded-2xl p-5">
+                  <div className="mb-4 flex items-center justify-between"><div><div className="mono text-[10px] tracking-[.16em] text-accent">SIGNAL / STRONG RULES</div><h3 className="mt-1 text-sm font-bold">القواعد التي تستحق الانتباه</h3></div><ShieldCheck size={18} className="text-primary" /></div>
+                  <div className="space-y-3">{strongRules.length === 0 ? <div className="rounded-xl border border-dashed border-border p-5 text-center"><p className="text-xs text-muted-foreground">لا توجد قاعدة تتجاوز minconf الحالية.</p><button type="button" data-testid="button-reset-minconf" onClick={() => setMinconf('70')} className="mt-3 text-xs font-semibold text-primary hover:underline">العودة إلى 70%</button></div> : strongRules.map((rule) => <div key={rule.id} className="relative overflow-hidden rounded-xl border border-primary/25 bg-primary/5 p-4"><div className="absolute inset-y-0 right-0 w-1 bg-primary" /><div className="flex items-start justify-between gap-2"><div><div className="mono text-[10px] text-primary">{rule.id} · STRONG RULE</div><div className="mono mt-2 text-sm font-semibold">{setLabel(rule.left)} <span className="text-accent">→</span> {setLabel(rule.right)}</div></div><div className="mono text-xl font-semibold text-primary">{rule.confidence.toFixed(0)}%</div></div><div className="mt-3 border-t border-primary/15 pt-3 text-[10px] leading-5 text-muted-foreground">لأن {setLabel(rule.left)} ظهر {rule.leftCount} مرات، وظهر مع {setLabel(rule.right)} في {rule.unionCount} منها.</div></div>)}</div>
+                  <div className="mt-4 rounded-xl bg-muted/45 p-3 text-[10px] leading-5 text-muted-foreground"><span className="font-bold text-foreground">قراءة سريعة:</span> الثقة تقيس احتمال رؤية الطرف الأيمن عندما نرى الطرف الأيسر، لا العكس.</div>
+                </div>
+              </div>
+            </section>
+
+            <section className="mt-5 grid gap-5 lg:grid-cols-[1fr_1.05fr]">
+              <div className="glass-card rounded-2xl p-5">
+                <div className="mb-4 flex items-center justify-between"><div><div className="mono text-[10px] tracking-[.16em] text-primary">RELATIONSHIP MAP</div><h3 className="mt-1 text-sm font-bold">خريطة العلاقة</h3></div><button type="button" data-testid="button-toggle-map-values" onClick={() => setShowConfidence((value) => !value)} className="rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-primary" aria-label="تبديل قيم الخريطة"><SlidersHorizontal size={15} /></button></div>
+                <div className="relative min-h-[245px] overflow-hidden rounded-xl border border-border bg-[#13242c]">
+                  <div className="data-grid absolute inset-0 opacity-20" />
+                  <svg className="absolute inset-0 h-full w-full" viewBox="0 0 500 245" role="img" aria-label="شبكة العلاقات بين العناصر 2 و3 و5"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="5" refY="3" orient="auto"><path d="M0,0 L0,6 L6,3 z" fill="#58d3c4" /></marker></defs><path d="M120 76 Q220 32 355 76" stroke="#58d3c4" strokeOpacity=".7" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" /><path d="M355 132 Q250 185 120 132" stroke="#f28c78" strokeOpacity=".7" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" /><path d="M136 103 Q245 104 340 103" stroke="#58d3c4" strokeOpacity=".5" strokeDasharray="4 5" strokeWidth="1.5" fill="none" markerEnd="url(#arrow)" /></svg>
+                  <div className="absolute right-[12%] top-[22%] flex size-16 flex-col items-center justify-center rounded-full border border-primary/70 bg-primary/15 text-primary shadow-[0_0_0_8px_hsl(var(--primary)/.06)]"><span className="mono text-lg font-semibold">2</span><span className="mono text-[8px]">{showConfidence ? '100%' : 'item'}</span></div>
+                  <div className="absolute left-1/2 top-[55%] flex size-16 -translate-x-1/2 flex-col items-center justify-center rounded-full border border-accent/70 bg-accent/15 text-accent"><span className="mono text-lg font-semibold">3</span><span className="mono text-[8px]">{showConfidence ? '100%' : 'item'}</span></div>
+                  <div className="absolute left-[12%] top-[22%] flex size-16 flex-col items-center justify-center rounded-full border border-primary/70 bg-primary/15 text-primary"><span className="mono text-lg font-semibold">5</span><span className="mono text-[8px]">{showConfidence ? '100%' : 'item'}</span></div>
+                  <div className="absolute bottom-3 right-3 rounded-lg border border-slate-600 bg-slate-950/50 px-2 py-1 text-[9px] text-slate-400"><span className="mr-1 inline-block size-1.5 rounded-full bg-primary" />قواعد قوية فقط</div>
+                </div>
+              </div>
+              <div className="glass-card rounded-2xl p-5">
+                <div className="mb-4 flex items-center gap-2"><div className="flex size-8 items-center justify-center rounded-lg bg-accent/10 text-accent"><FileText size={16} /></div><div><div className="mono text-[10px] tracking-[.16em] text-accent">EXPORT / SHARE</div><h3 className="mt-1 text-sm font-bold">احفظ أثر التجربة</h3></div></div>
+                <p className="max-w-lg text-xs leading-6 text-muted-foreground">صدّر جدول المرشحين والقرارات وقواعد I={'{2,3,5}'} لتشاركه في المحاضرة أو تعود إليه في المراجعة.</p>
+                <div className="mt-5 grid gap-2 sm:grid-cols-3"><button type="button" data-testid="button-export-pdf" onClick={() => { setStatus('فتح نافذة الطباعة للحفظ كـ PDF'); window.print(); }} className="flex items-center justify-center gap-2 rounded-xl border border-border bg-muted/35 px-3 py-3 text-xs font-semibold hover:border-primary hover:text-primary"><FileText size={15} />PDF</button><button type="button" data-testid="button-export-excel" onClick={() => download('xlsx')} className="flex items-center justify-center gap-2 rounded-xl border border-border bg-muted/35 px-3 py-3 text-xs font-semibold hover:border-primary hover:text-primary"><FileSpreadsheet size={15} />Excel</button><button type="button" data-testid="button-export-csv" onClick={() => download('csv')} className="flex items-center justify-center gap-2 rounded-xl border border-border bg-muted/35 px-3 py-3 text-xs font-semibold hover:border-primary hover:text-primary"><Download size={15} />CSV</button></div>
+                <div className="mt-4 flex items-center gap-2 rounded-xl border border-primary/15 bg-primary/5 px-3 py-2.5 text-[10px] text-muted-foreground"><ShieldCheck size={13} className="text-primary" />التقرير يُنشأ محلياً من الحالة الحالية فقط.</div>
+              </div>
+            </section>
+
+            <footer className="mt-14 flex flex-col justify-between gap-4 border-t border-border pt-5 text-[10px] text-muted-foreground sm:flex-row sm:items-center"><div className="flex items-center gap-2"><FlaskConical size={14} className="text-primary" /><span>مِسبار · Apriori Learning Lab</span></div><div className="flex items-center gap-4"><span className="mono">TDB / {transactions.length} transactions</span><button type="button" data-testid="button-back-top" onClick={scrollToTop} className="flex items-center gap-1 hover:text-primary">العودة للأعلى <ArrowUpRight size={13} /></button></div></footer>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
+
+export const Route = createFileRoute("/")({ component: App });
