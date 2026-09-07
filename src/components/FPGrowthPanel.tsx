@@ -1,7 +1,17 @@
 import { useState, useMemo } from "react";
 import { type Dataset } from "@/lib/dm-algorithms";
-import { parseTransactions, fpGrowth, type FPParsingFormat } from "@/lib/fp-growth";
+import {
+  parseTransactions,
+  fpGrowth,
+  FPTree,
+  type ConditionalPatternBase,
+  type FPParsingFormat,
+  type FPStepResult,
+  type Transaction,
+} from "@/lib/fp-growth";
 import { FPTreeView } from "@/components/FPTreeView";
+
+type FPAnalysis = FPStepResult & { transactions: Transaction[] };
 
 export function FPGrowthPanel({ dataset }: { dataset: Dataset }) {
   const [format, setFormat] = useState<FPParsingFormat>("items-column");
@@ -18,7 +28,7 @@ export function FPGrowthPanel({ dataset }: { dataset: Dataset }) {
     conditionalBases,
     conditionalTrees,
     frequentPatterns
-  } = useMemo(() => {
+  } = useMemo<FPAnalysis>(() => {
     try {
       const txs = parseTransactions(dataset.rows, {
         format,
@@ -26,12 +36,30 @@ export function FPGrowthPanel({ dataset }: { dataset: Dataset }) {
         itemsColumn,
         itemDelimiter
       });
-      if (txs.length === 0) return { transactions: [] };
+      if (txs.length === 0) {
+        return {
+          transactions: [],
+          fList: [],
+          orderedTransactions: [],
+          tree: new FPTree(),
+          conditionalBases: {} as Record<string, ConditionalPatternBase>,
+          conditionalTrees: {},
+          frequentPatterns: [],
+        };
+      }
       const res = fpGrowth(txs, minSup);
       return { transactions: txs, ...res };
     } catch (e) {
       console.error(e);
-      return { transactions: [] };
+      return {
+        transactions: [],
+        fList: [],
+        orderedTransactions: [],
+        tree: new FPTree(),
+        conditionalBases: {} as Record<string, ConditionalPatternBase>,
+        conditionalTrees: {},
+        frequentPatterns: [],
+      };
     }
   }, [dataset, format, tidColumn, itemsColumn, itemDelimiter, minSup]);
 
